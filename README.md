@@ -125,8 +125,23 @@ and perform no transactions or network/LLM calls.
   convention, not claim approval. Missing/invalid inputs return NOT_APPLICABLE;
   a claim before purchase blocks; dates outside the window warn.
 
-Run all rules and regression tests with `pytest`. The existing Dataset Health
-UI is unchanged; no business workflow UI is added.
+Run all rules and regression tests with `pytest`.
+
+## Step 5 command center
+
+Run `streamlit run app.py` from the activated virtual environment. The guided UI
+supports PO, stock, dealer, part, and claim checks plus operational risk scans.
+Demo Scenarios populate inputs only; press **Run check** to evaluate real data.
+
+**Evidence & Decision Trace** shows the invoked tool, deterministic check outcomes,
+issue codes, source tables, and record keys. It is factual provenance, not hidden
+reasoning or chain-of-thought. No confidence score is invented.
+
+Dataset Health remains available alongside tool availability. Session History
+keeps the last 20 checks in memory only and clears when the dataset changes.
+AI/LLM orchestration is not enabled. No write transactions or business actions
+are enabled. The UI delegates decisions to existing tools and rules; pure
+presentation helpers are tested without brittle browser automation tests.
 
 GitHub Actions installs runtime and development dependencies on Python 3.11,
 then runs Ruff and pytest for pull requests and pushes to `main`.
