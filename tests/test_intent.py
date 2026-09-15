@@ -98,3 +98,43 @@ def test_prompt_requests_json_and_keeps_user_text_separate(monkeypatch):
     assert "JSON object only" in messages[0]["content"]
     assert messages[1] == {"role": "user", "content": text}
     assert options["temperature"] == 0
+
+
+@pytest.mark.parametrize("text, output, expected", [
+    ("What should we do when an operational condition occurs?",
+     {"intent": "SEARCH_KNOWLEDGE"}, "SEARCH_KNOWLEDGE"),
+    ("Find operational anomalies", {"intent": "SCAN_ANOMALIES"}, "SCAN_ANOMALIES"),
+    ("Check stock for P-123", {"intent": "CHECK_STOCK", "part_no": "P-123"}, "CHECK_STOCK"),
+])
+def test_operational_guidance_prompt_contract(text, output, expected, monkeypatch):
+    client = FakeLLMClient(json.dumps(output))
+    original = client.chat
+    captured = []
+
+    def capture(messages, **kwargs):
+        captured.extend(messages)
+        return original(messages, **kwargs)
+
+    monkeypatch.setattr(client, "chat", capture)
+    result = parse_intent(text, client)
+    assert result.intent == expected
+    if expected == "SEARCH_KNOWLEDGE":
+        assert result.query == text
+    prompt = captured[0]["content"]
+    for clause in (
+        "SEARCH_KNOWLEDGE for questions asking what to do",
+        "SCAN_ANOMALIES for requests to scan, find, detect, list, or identify",
+        "CHECK_* for current operational facts/status",
+        "JSON object only", "No extra fields", "Do not infer business facts",
+        "Copy only explicitly supplied identifiers", "Unsupported or ambiguous requests: UNKNOWN",
+    ):
+        assert clause in prompt
+    for special_case in ("negative stock", "KB-007", "G09", "PO-2026-1026"):
+        assert special_case not in prompt
+    assert client.usage.snapshot().request_count == 1
+
+
+@pytest.mark.parametrize("intent", ["SEARCH_KNOWLEDGE", "SCAN_ANOMALIES", "CHECK_STOCK"])
+def test_boundary_intents_still_reject_extra_fields(intent):
+    client = FakeLLMClient(json.dumps({"intent": intent, "unsupported_field": "invented"}))
+    assert parse_intent("How should a condition be handled?", client) == ParsedIntent()
