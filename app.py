@@ -12,7 +12,6 @@ def main() -> None:
     st.set_page_config(page_title=APP_NAME, page_icon="🧠", layout="wide")
     st.title(APP_NAME)
     st.write(APP_TAGLINE)
-    st.caption(f"Team {TEAM_NAME}")
     llm_status = get_llm_status()
     try:
         metadata = initialize_data()
@@ -22,15 +21,14 @@ def main() -> None:
         return
     ready = all(callable(action[0]) for action in ACTIONS.values())
     st.caption(
-        f"Data: Ready · Decision Engine: {'Ready' if ready else 'Unavailable'} · "
+        f"System: {'Ready' if ready else 'Unavailable'} · Team {TEAM_NAME} · Decision Engine: {'Ready' if ready else 'Unavailable'} · "
         f"Copilot AI: {llm_status.state}"
     )
-    st.caption("Deterministic tools · Read-only business checks · Optional natural-language copilot")
-    st.caption(f"LLM Adapter: {llm_status.state} · {llm_status.detail}")
-    render_control_tower(metadata)
-    st.divider()
     render_command_center(metadata)
     st.divider()
+    with st.expander("System diagnostics", expanded=False):
+        st.caption(f"LLM Adapter: {llm_status.state} · {llm_status.detail}")
+        render_control_tower(metadata)
     render_dataset_health(metadata)
     with st.expander("Business Rules Health", expanded=False):
         st.caption(

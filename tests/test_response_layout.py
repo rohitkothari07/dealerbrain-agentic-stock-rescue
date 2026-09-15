@@ -40,7 +40,7 @@ st.session_state.setdefault("history", [])
 st.session_state.setdefault("latest", {
     "view": _execution_view(DecisionResult(DecisionStatus.PASS, "Verified", {}, (), ()),
                             "CHECK_PO", "check_po"),
-    "message": "Grounded explanation", "inputs": [], "time": "test", "fingerprint": "test",
+    "message": "Grounded explanation", "question": "Check my PO", "inputs": [], "time": "test", "fingerprint": "test",
 })
 render_command_center({"sha256": "test"})
 ''').run()
@@ -50,5 +50,11 @@ render_command_center({"sha256": "test"})
     assert not any("DETERMINISTIC COPILOT RESULT" in c.value for c in at.caption)
     assert not any("Last completed check" in c.value for c in at.caption)
     assert "Evidence & Decision Trace" in headings
+    assert len(at.chat_message) == 2
+    assert at.chat_message[0].name == "user"
+    assert at.chat_message[1].name == "assistant"
+    assert any(t.value == "Check my PO" for t in at.chat_message[0].text)
+    assert any(t.value == "Grounded explanation" for t in at.chat_message[1].text)
+    assert not next(e for e in at.expander if e.label == "Deterministic actions").proto.expanded
     at.run()
     forbidden.assert_not_called()

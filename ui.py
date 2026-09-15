@@ -30,6 +30,13 @@ ACTIONS = {
 }
 
 
+QUICK_PROMPTS = (
+    "Can PO-2026-1026 be fulfilled?",
+    "Process PO-2026-1106",
+    "What is the procedure for a suspended dealer?",
+)
+
+
 KNOWLEDGE_EXAMPLES = (
     "What is the procedure for a suspended dealer?",
     "What should we do with negative available stock?",
@@ -164,7 +171,8 @@ def _render_result(view):
         for column, (label, key) in zip(st.columns(4), (("Requested", "requested_qty"), ("Network Available", "network_available_qty"),
                            ("Planned Fulfillment", "planned_fulfillment_qty"),
                            ("Remaining", "unresolved_remaining_qty"))):
-            column.metric(label, facts[key] if facts[key] is not None else "Unavailable")
+            with column.container(border=True):
+                st.metric(label, facts[key] if facts[key] is not None else "Unavailable")
         st.dataframe(facts["allocations"], hide_index=True, width="stretch")
     if view.get("dealers"):
         st.dataframe(view["dealers"], hide_index=True, width="stretch")
@@ -177,12 +185,12 @@ def _render_result(view):
             ("requested_qty", "available_qty", "deficit_qty"),
         ):
             column.metric(label, stock[key])
-    with st.expander("Facts", expanded=True):
+    with st.expander("Facts", expanded=False):
         if view["facts"]:
             st.dataframe(view["facts"], hide_index=True, width="stretch", height="auto")
         else:
             st.caption("No source facts were returned for this check.")
-    with st.expander(f"Issues ({len(view['issues'])})", expanded=True):
+    with st.expander(f"Issues ({len(view['issues'])})", expanded=bool(view["issues"])):
         if view["issues"]:
             st.dataframe(view["issues"], hide_index=True, width="stretch")
         else:
@@ -248,28 +256,22 @@ def render_command_center(metadata):
         st.session_state["latest"] = None
         st.session_state["copilot_notice"] = None
         st.session_state["dataset_sha"] = metadata["sha256"]
-    left, right = st.columns([1.25, 1], gap="large")
+    left, right = st.columns([0.65, 0.35], gap="large")
     with left:
-        st.subheader("Copilot Command Center")
-        st.markdown("**Stock Rescue / Fulfillment**")
-        st.caption("Demand → Diagnose → Plan → Human Approval → Simulated Action → Audit")
-        first, second = st.columns(2)
-        first.button("Fulfillment demo", on_click=_prefill,
-                     args=("Plan Fulfillment", "fulfillment_po", "PO-2026-1026"))
-        second.button("Governance scenario", on_click=_prefill,
-                      args=("Evaluate Purchase Order", "po_id", "PO-2026-1106"))
-        st.caption("Shortcuts prefill only. Select Run check to plan; confirmation is a separate step.")
         st.subheader("Ask DealerBRAIN")
+        st.caption("AI understands and explains · Deterministic tools establish facts · Evidence shows why")
+        for column, prompt in zip(st.columns(3), QUICK_PROMPTS):
+            column.button(prompt, key=f"quick_{prompt}", on_click=_prefill_question,
+                          args=(prompt,), width="stretch")
+        st.caption("Suggested prompts prefill your request. Press Enter or select Send to submit.")
         with st.expander("Knowledge guidance examples", expanded=False):
             for question in KNOWLEDGE_EXAMPLES:
                 st.button(question, on_click=_prefill_question, args=(question,))
-        with st.form("copilot", clear_on_submit=True):
-            question = st.text_input(
-                "Your request", max_chars=4000, key="copilot_question",
-                placeholder="Ask about a PO, part, dealer, claim, stock, or operational risks...",
-            )
-            ask = st.form_submit_button("Ask DealerBRAIN")
-        if ask:
+        question = st.chat_input(
+            "Ask DealerBRAIN about a PO, part, dealer, claim, stock, or policy...",
+            key="copilot_question", max_chars=4000,
+        )
+        if question:
             st.session_state["latest"] = None
             st.session_state["copilot_notice"] = None
             try:
@@ -279,7 +281,7 @@ def render_command_center(metadata):
                     st.session_state["copilot_notice"] = interaction["message"]
                 else:
                     record = {
-                        **interaction, "inputs": [],
+                        **interaction, "question": question, "inputs": [],
                         "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
                         "fingerprint": metadata["sha256"][:16],
                     }
@@ -294,41 +296,50 @@ def render_command_center(metadata):
         response_area = st.container()
         st.divider()
         st.subheader("Guided checks")
-        st.caption("Choose a check. Decisions come from Python rules and operational records.")
-        with st.expander("Demo Scenarios", expanded=False):
-            st.caption("Shortcuts fill inputs only. Select Run check to evaluate live data.")
-            for po in ("PO-2026-1026", "PO-2026-1106"):
+        with st.expander("Deterministic actions", expanded=False):
+            st.caption("Choose a check. Decisions come from Python rules and operational records.")
+            st.markdown("**Stock Rescue / Fulfillment**")
+            st.caption("Demand → Diagnose → Plan → Human Approval → Simulated Action → Audit")
+            first, second = st.columns(2)
+            first.button("Fulfillment demo", on_click=_prefill,
+                         args=("Plan Fulfillment", "fulfillment_po", "PO-2026-1026"))
+            second.button("Governance scenario", on_click=_prefill,
+                          args=("Evaluate Purchase Order", "po_id", "PO-2026-1106"))
+            st.caption("Shortcuts prefill only. Select Run check to plan; confirmation is a separate step.")
+            with st.expander("Demo Scenarios", expanded=False):
+                st.caption("Shortcuts fill inputs only. Select Run check to evaluate live data.")
+                for po in ("PO-2026-1026", "PO-2026-1106"):
+                    st.button(
+                        f"Evaluate {po}",
+                        on_click=_prefill,
+                        args=("Evaluate Purchase Order", "po_id", po),
+                        width="stretch",
+                    )
                 st.button(
-                    f"Evaluate {po}",
+                    "Stock: P-10036 · quantity 20",
                     on_click=_prefill,
-                    args=("Evaluate Purchase Order", "po_id", po),
+                    args=("Check Stock", "stock_part", "P-10036", 20),
                     width="stretch",
                 )
-            st.button(
-                "Stock: P-10036 · quantity 20",
-                on_click=_prefill,
-                args=("Check Stock", "stock_part", "P-10036", 20),
-                width="stretch",
-            )
-            st.button(
-                "Scan Operational Risks",
-                on_click=_prefill,
-                args=("Scan Operational Risks",),
-                width="stretch",
-            )
-        action = st.selectbox("Action", list(ACTIONS), key="action")
-        function, check, label, key = ACTIONS[action]
-        with st.form("command"):
-            inputs = []
-            if label:
-                inputs.append(st.text_input(label, key=key))
-            if action == "Check Stock":
-                inputs.append(
-                    st.number_input("Requested Quantity", value=1, step=1, key="requested_qty")
+                st.button(
+                    "Scan Operational Risks",
+                    on_click=_prefill,
+                    args=("Scan Operational Risks",),
+                    width="stretch",
                 )
-            if not label:
-                st.caption("Scan operational records for supported data-quality risks.")
-            submitted = st.form_submit_button("Run check", type="primary", width="stretch")
+            action = st.selectbox("Action", list(ACTIONS), key="action")
+            function, check, label, key = ACTIONS[action]
+            with st.form("command"):
+                inputs = []
+                if label:
+                    inputs.append(st.text_input(label, key=key))
+                if action == "Check Stock":
+                    inputs.append(
+                        st.number_input("Requested Quantity", value=1, step=1, key="requested_qty")
+                    )
+                if not label:
+                    st.caption("Scan operational records for supported data-quality risks.")
+                submitted = st.form_submit_button("Run check", type="primary", width="stretch")
         if submitted:
             st.session_state["copilot_notice"] = None
             # Clear the previous display before attempting a new result, including on errors.
@@ -361,18 +372,23 @@ def render_command_center(metadata):
         if latest:
             if latest.get("message"):
                 with response_area:
-                    with st.container(border=True):
+                    if latest.get("question"):
+                        with st.chat_message("user"):
+                            st.text(latest["question"])
+                    with st.chat_message("assistant"):
                         st.subheader("Grounded DealerBRAIN Response")
                         st.text(latest["message"])
                         st.caption("AI understands and explains; deterministic tools establish facts. "
                                    "Evidence shows why.")
-                    _render_result(latest["view"])
+                    with st.container(border=True):
+                        _render_result(latest["view"])
                     _render_action(latest)
             else:
                 _render_result(latest["view"])
                 _render_action(latest)
     with right:
-        _render_trace(st.session_state.get("latest"))
+        with st.container(border=True):
+            _render_trace(st.session_state.get("latest"))
     with st.expander("Session History", expanded=False):
         history = st.session_state["history"]
         if history:

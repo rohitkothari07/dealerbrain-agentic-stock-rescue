@@ -59,11 +59,13 @@ def test_golden_ui_pipeline(monkeypatch):
         "render_command_center({'sha256':'test-fingerprint'})"
     ).run()
     assert client.chat.call_count == 0
-    next(t for t in at.text_input if t.label == "Your request").set_value(
+    at.chat_input(key="copilot_question").set_value(
         "Can PO-2026-1026 be fulfilled?"
-    )
-    next(b for b in at.button if b.label == "Ask DealerBRAIN").click().run()
+    ).run()
     assert not at.exception
+    assert [m.name for m in at.chat_message] == ["user", "assistant"]
+    assert any(h.value == "Proposed Fulfillment Action" for h in at.subheader)
+    assert at.button(key="confirm_simulated_fulfillment")
     latest = at.session_state["latest"]
     assert latest["intent"] == "PLAN_FULFILLMENT"
     assert latest["view"]["tool"] == "plan_fulfillment"

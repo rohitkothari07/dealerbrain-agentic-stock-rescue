@@ -96,8 +96,9 @@ def test_copilot_submission_not_repeated_on_rerender(monkeypatch):
         "render_command_center({'sha256': 'test-fingerprint'})"
     ).run()
     assert client.chat.call_count == 0
-    next(t for t in at.text_input if t.label == "Your request").set_value("Check dealer D007")
-    next(b for b in at.button if b.label == "Ask DealerBRAIN").click().run()
+    assert len(at.chat_input) == 1
+    assert not any(b.label == "Ask DealerBRAIN" for b in at.button)
+    at.chat_input(key="copilot_question").set_value("Check dealer D007").run()
     assert not at.exception
     assert client.chat.call_count == 2
     assert at.session_state["latest"]["intent"] == "CHECK_DEALER"

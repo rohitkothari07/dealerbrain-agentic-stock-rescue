@@ -37,9 +37,9 @@ def test_shortcuts_only_prefill(monkeypatch):
         next(b for b in at.button if b.label == label).click().run()
         assert not at.exception
         assert at.session_state[key] == value
-    for query in ui.KNOWLEDGE_EXAMPLES:
+    for query in (*ui.QUICK_PROMPTS, *ui.KNOWLEDGE_EXAMPLES):
         next(b for b in at.button if b.label == query).click().run()
         assert not at.exception
-        assert at.text_input(key="copilot_question").value == query
+        assert at.chat_input(key="copilot_question").value == query
     forbidden.assert_not_called()
     assert at.session_state["latest"] is None
