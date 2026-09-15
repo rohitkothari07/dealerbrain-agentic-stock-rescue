@@ -5,7 +5,7 @@ import streamlit as st
 from config import APP_NAME, APP_TAGLINE, TEAM_NAME
 from data_loader import DataInitializationError, initialize_data
 from llm_client import get_llm_status
-from ui import ACTIONS, render_command_center, render_dataset_health
+from ui import ACTIONS, render_command_center, render_dataset_health, render_control_tower
 
 
 def main() -> None:
@@ -27,6 +27,7 @@ def main() -> None:
     )
     st.caption("Deterministic tools · Read-only business checks · Optional natural-language copilot")
     st.caption(f"LLM Adapter: {llm_status.state} · {llm_status.detail}")
+    render_control_tower(metadata)
     st.divider()
     render_command_center(metadata)
     st.divider()

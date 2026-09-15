@@ -29,6 +29,33 @@ ACTIONS = {
 }
 
 
+KNOWLEDGE_EXAMPLES = (
+    "What is the procedure for a suspended dealer?",
+    "What should we do with negative available stock?",
+    "What does the guidance say about hazmat shipping?",
+)
+
+
+def control_tower_metrics(metadata):
+    view = dataset_view(metadata)
+    return {"Operational tables": view["table_count"], "Operational rows": view["row_count"],
+            "Validation warnings": view["warnings"]}
+
+
+def render_control_tower(metadata):
+    st.subheader("After-Sales Control Tower")
+    metrics = control_tower_metrics(metadata)
+    for column, (label, value) in zip(st.columns(3), metrics.items()):
+        with column.container(border=True):
+            st.metric(label, value)
+    st.caption("Source data: read-only · Writes: human-confirmed POC simulations only · "
+               "AI: grounded in deterministic tools and Knowledge evidence")
+
+
+def _prefill_question(question):
+    st.session_state["copilot_question"] = question
+
+
 def run_copilot(user_text, client):
     """Submit once; return display data with provenance exclusively from the tool."""
     if get_llm_status().state != "Configured":
@@ -133,10 +160,10 @@ def _render_result(view):
     if view.get("fulfillment"):
         facts = view["fulfillment"]
         st.subheader("Fulfillment Plan")
-        for label, key in (("Requested", "requested_qty"), ("Network Available", "network_available_qty"),
+        for column, (label, key) in zip(st.columns(4), (("Requested", "requested_qty"), ("Network Available", "network_available_qty"),
                            ("Planned Fulfillment", "planned_fulfillment_qty"),
-                           ("Remaining", "unresolved_remaining_qty")):
-            st.metric(label, facts[key] if facts[key] is not None else "Unavailable")
+                           ("Remaining", "unresolved_remaining_qty"))):
+            column.metric(label, facts[key] if facts[key] is not None else "Unavailable")
         st.dataframe(facts["allocations"], hide_index=True, width="stretch")
     if view.get("dealers"):
         st.dataframe(view["dealers"], hide_index=True, width="stretch")
@@ -181,8 +208,10 @@ def _render_trace(record):
     st.text(f"Tool: {view['tool']}")
     if view.get("knowledge"):
         st.dataframe(view["knowledge"], hide_index=True)
+    st.markdown("**Deterministic decision**")
     st.text(f"Outcome: {view['status']['label']}")
     st.caption(f"Evaluated: {record['time']} · Dataset: {record['fingerprint']}")
+    st.markdown("**Tools / checks invoked**")
     st.dataframe(view["checks"], hide_index=True, width="stretch")
     st.markdown("**Source records**")
     if view["evidence"]:
@@ -203,10 +232,21 @@ def render_command_center(metadata):
     left, right = st.columns([1.25, 1], gap="large")
     with left:
         st.subheader("Copilot Command Center")
+        st.markdown("**Stock Rescue / Fulfillment**")
+        st.caption("Demand → Diagnose → Plan → Human Approval → Simulated Action → Audit")
+        first, second = st.columns(2)
+        first.button("Fulfillment demo", on_click=_prefill,
+                     args=("Plan Fulfillment", "fulfillment_po", "PO-2026-1026"))
+        second.button("Governance scenario", on_click=_prefill,
+                      args=("Evaluate Purchase Order", "po_id", "PO-2026-1106"))
+        st.caption("Shortcuts prefill only. Select Run check to plan; confirmation is a separate step.")
         st.subheader("Ask DealerBRAIN")
+        with st.expander("Knowledge guidance examples", expanded=False):
+            for question in KNOWLEDGE_EXAMPLES:
+                st.button(question, on_click=_prefill_question, args=(question,))
         with st.form("copilot", clear_on_submit=True):
             question = st.text_input(
-                "Your request", max_chars=4000,
+                "Your request", max_chars=4000, key="copilot_question",
                 placeholder="Ask about a PO, part, dealer, claim, stock, or operational risks...",
             )
             ask = st.form_submit_button("Ask DealerBRAIN")
