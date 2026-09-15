@@ -188,3 +188,36 @@ restart clears counters; provider billing remains authoritative.
 `prompts.py` supplies concise evidence-grounded explanation instructions. The
 adapter has no SQL executor, tool execution, routing, RAG, business decisions, or
 transaction capability. Model text is not treated as an authoritative business fact.
+
+## EC2 Hackathon Deployment
+
+On the Ubuntu EC2 host (Python 3.11+), clone the team's repository using its actual
+Git URL, or run `git pull` in an existing checkout. From that repository root:
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+cp .env.example .env  # First setup only; preserve an existing local .env.
+```
+
+Keep `LLM_ENABLED=false` until organizer/provider details are supplied. Configure
+the API base URL, model and credential in the local `.env` when available;
+non-loopback providers require HTTPS. No organizer endpoint or pricing is assumed.
+The commented Ollama example is for local development only; this launch does not
+start Ollama. Never commit `.env` or credentials.
+
+Ensure the supplied workbook exists at `data/after_sales.xlsx`, then run:
+
+```sh
+python scripts/preflight.py
+python data_loader.py
+./scripts/run_ec2.sh
+```
+
+Preflight checks only local prerequisites; ingestion generates runtime DuckDB data.
+The foreground launch binds `0.0.0.0:8501`; use `PORT=8502 ./scripts/run_ec2.sh`
+for a different port. Access `http://<EC2-host>:8501` subject to hackathon and
+security-group rules. Runtime databases remain local and Git-ignored. Public or
+production exposure should use proper TLS and a reverse proxy; those are outside
+this hackathon step.
