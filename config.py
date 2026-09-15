@@ -77,10 +77,12 @@ class LLMSettings:
         try:
             url = urlsplit(self.base_url)
             valid_url = (
-                url.scheme == "https"
+                (url.scheme == "https" or (
+                    url.scheme == "http" and url.hostname in {"localhost", "127.0.0.1", "::1"}
+                ))
                 and bool(url.hostname)
-                and not url.username
-                and not url.password
+                and url.username is None
+                and url.password is None
                 and not url.query
                 and not url.fragment
             )
@@ -89,7 +91,9 @@ class LLMSettings:
             valid_url = False
         if not valid_url:
             raise ValueError(
-                "LLM_BASE_URL must be an HTTPS API base URL without embedded credentials."
+                "LLM_BASE_URL requires HTTPS except for HTTP loopback local development "
+                "(localhost, 127.0.0.1, ::1); embedded credentials, queries and fragments "
+                "are not allowed."
             )
         if any(c in self.api_key for c in "\r\n"):
             raise ValueError("Invalid API credential format.")

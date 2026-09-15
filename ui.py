@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 import logging
+import json
 
 import streamlit as st
 
@@ -152,7 +153,7 @@ def render_dataset_health(metadata):
 
 
 def _render_result(view):
-    st.caption("DETERMINISTIC COPILOT RESULT")
+    st.caption("Deterministic facts and findings")
     getattr(st, view["status"]["style"])(view["status"]["label"])
     st.text(view["summary"])
     if view.get("knowledge"):
@@ -188,6 +189,24 @@ def _render_result(view):
             st.caption("No issues reported by this check.")
 
 
+
+def _display_evidence(rows):
+    """Copy presentation rows; preserve authoritative keys in the underlying view."""
+    displayed = []
+    for row in rows:
+        copy = dict(row)
+        if row["Source table"] == "purchase_orders":
+            try:
+                key = json.loads(row["Record key"])
+                if (isinstance(key, list) and len(key) == 2
+                        and isinstance(key[0], str) and type(key[1]) is int):
+                    copy["Record key"] = f"{key[0]} · Line {key[1]}"
+            except (ValueError, TypeError):
+                pass
+        displayed.append(copy)
+    return displayed
+
+
 def _render_trace(record):
     st.subheader("Evidence & Decision Trace")
     st.caption("Factual provenance and check outcomes from the deterministic engine.")
@@ -215,7 +234,7 @@ def _render_trace(record):
     st.dataframe(view["checks"], hide_index=True, width="stretch")
     st.markdown("**Source records**")
     if view["evidence"]:
-        st.dataframe(view["evidence"], hide_index=True, width="stretch")
+        st.dataframe(_display_evidence(view["evidence"]), hide_index=True, width="stretch")
     else:
         st.caption("No source records returned. Missing records are not replaced with sample data.")
     if view["issues"]:
@@ -272,6 +291,9 @@ def render_command_center(metadata):
                 )
         if st.session_state.get("copilot_notice"):
             st.info(st.session_state["copilot_notice"])
+        response_area = st.container()
+        st.divider()
+        st.subheader("Guided checks")
         st.caption("Choose a check. Decisions come from Python rules and operational records.")
         with st.expander("Demo Scenarios", expanded=False):
             st.caption("Shortcuts fill inputs only. Select Run check to evaluate live data.")
@@ -338,16 +360,17 @@ def render_command_center(metadata):
         latest = st.session_state.get("latest")
         if latest:
             if latest.get("message"):
-                st.text(latest["message"])
-            input_label = ", ".join(str(i) for i in latest["inputs"]) or latest.get(
-                "intent", "Operational scan"
-            )
-            st.caption(
-                f"Last completed check: {latest['view']['action']} · "
-                f"Inputs: {input_label}"
-            )
-            _render_result(latest["view"])
-            _render_action(latest)
+                with response_area:
+                    with st.container(border=True):
+                        st.subheader("Grounded DealerBRAIN Response")
+                        st.text(latest["message"])
+                        st.caption("AI understands and explains; deterministic tools establish facts. "
+                                   "Evidence shows why.")
+                    _render_result(latest["view"])
+                    _render_action(latest)
+            else:
+                _render_result(latest["view"])
+                _render_action(latest)
     with right:
         _render_trace(st.session_state.get("latest"))
     with st.expander("Session History", expanded=False):
