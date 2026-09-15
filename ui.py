@@ -5,10 +5,12 @@ import logging
 
 import streamlit as st
 
+from fulfillment import FulfillmentPlan
+from rules import DecisionResult, DecisionStatus
 from intent import parse_intent
 from llm_client import LLMClient, get_llm_status
 from repositories import RepositoryError
-from responder import generate_response
+from responder import generate_response, fulfillment_facts
 from router import execute_intent
 import tools
 from ui_models import dataset_view, result_view
@@ -36,10 +38,24 @@ def run_copilot(user_text, client):
     response = generate_response(user_text, execution, client)
     view = None
     if execution.result is not None and execution.error is None:
+        display_result = execution.result
+        if isinstance(display_result, FulfillmentPlan):
+            styles = {"FULLY_FULFILLABLE": DecisionStatus.PASS,
+                      "PARTIALLY_FULFILLABLE": DecisionStatus.WARNING,
+                      "NO_STOCK": DecisionStatus.WARNING, "BLOCKED": DecisionStatus.BLOCKED}
+            display_result = DecisionResult(
+                styles[execution.result.status.value], "Fulfillment Plan — proposed only; nothing shipped.",
+                fulfillment_facts(execution.result, execution.po_id),
+                execution.result.issues, execution.result.evidence,
+            )
         view = result_view(
-            execution.result, action=parsed.intent,
+            display_result, action=parsed.intent,
             tool=execution.tool_name, check=execution.tool_name,
         )
+        if isinstance(execution.result, FulfillmentPlan):
+            view["status"]["label"] = execution.result.status.value
+            view["checks"][0]["Outcome"] = execution.result.status.value
+            view["fulfillment"] = fulfillment_facts(execution.result, execution.po_id)
     return {"message": response.text, "view": view, "intent": parsed.intent}
 
 
@@ -67,6 +83,14 @@ def _render_result(view):
     st.caption("DETERMINISTIC COPILOT RESULT")
     getattr(st, view["status"]["style"])(view["status"]["label"])
     st.text(view["summary"])
+    if view.get("fulfillment"):
+        facts = view["fulfillment"]
+        st.subheader("Fulfillment Plan")
+        for label, key in (("Requested", "requested_qty"), ("Network Available", "network_available_qty"),
+                           ("Planned Fulfillment", "planned_fulfillment_qty"),
+                           ("Remaining", "unresolved_remaining_qty")):
+            st.metric(label, facts[key] if facts[key] is not None else "Unavailable")
+        st.dataframe(facts["allocations"], hide_index=True, width="stretch")
     if view.get("dealers"):
         st.dataframe(view["dealers"], hide_index=True, width="stretch")
     for stock in view["stocks"]:

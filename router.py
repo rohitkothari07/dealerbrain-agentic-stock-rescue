@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+from fulfillment import FulfillmentPlan
 from intent import ParsedIntent
 from rules import BusinessIssue, DecisionResult, valid_identifier
 import tools
@@ -11,8 +12,9 @@ import tools
 class ToolExecution:
     intent: str
     tool_name: str | None = None
-    result: DecisionResult | list[BusinessIssue] | None = None
+    result: DecisionResult | list[BusinessIssue] | FulfillmentPlan | None = None
     error: str | None = None
+    po_id: str | None = None
 
 
 def execute_intent(parsed_intent: ParsedIntent) -> ToolExecution:
@@ -36,6 +38,8 @@ def execute_intent(parsed_intent: ParsedIntent) -> ToolExecution:
         name, tool, args = "check_part", tools.check_part, (parsed_intent.part_no,)
     elif intent == "CHECK_CLAIM":
         name, tool, args = "check_claim", tools.check_claim, (parsed_intent.claim_id,)
+    elif intent == "PLAN_FULFILLMENT":
+        name, tool, args = "plan_fulfillment", tools.plan_fulfillment, (parsed_intent.po_id,)
     elif intent == "SCAN_ANOMALIES":
         name, tool, args = "scan_anomalies", tools.scan_anomalies, ()
     else:
@@ -43,8 +47,10 @@ def execute_intent(parsed_intent: ParsedIntent) -> ToolExecution:
     if args and not valid_identifier(args[0]):
         return ToolExecution(intent, error="A non-empty string identifier is required.")
     try:
-        result = tool(*args)
+        result = tool(po_id=args[0]) if intent == "PLAN_FULFILLMENT" else tool(*args)
     except Exception:
         # Do not expose backend exception details or manufacture a business result.
         return ToolExecution(intent, name, error="Deterministic tool execution failed.")
-    return ToolExecution(intent, name, result)
+    return ToolExecution(intent, name, result, po_id=(
+        parsed_intent.po_id if intent == "PLAN_FULFILLMENT" else None
+    ))
