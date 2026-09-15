@@ -79,7 +79,7 @@ def test_startup_rerender_and_guided_action_without_llm(monkeypatch):
     at.run()
     assert guided.call_count == 1
     assert LLMClient.chat.call_count == 0
-    assert len(at.selectbox[0].options) == 6
+    assert len(at.selectbox[0].options) == 7
 
 
 def test_copilot_submission_not_repeated_on_rerender(monkeypatch):

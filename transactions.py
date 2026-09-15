@@ -104,3 +104,20 @@ def execute_simulated_fulfillment(po_id, fulfillment_plan, *, confirmed, store_p
         return TransactionResult("CREATED", action)
     except (sqlite3.Error, OSError):
         return TransactionResult("REJECTED", error="Local simulation store is unavailable.")
+
+
+def list_simulated_actions(*, store_path=ACTION_STORE):
+    """Read the last 20 simulation summaries without creating or changing the store."""
+    path = Path(store_path).resolve()
+    if not path.is_file():
+        return []
+    try:
+        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as connection:
+            rows = connection.execute(
+                "SELECT action_json FROM fulfillment_actions WHERE status = ? ORDER BY rowid DESC LIMIT ?",
+                ("POC_SIMULATED", 20),
+            ).fetchall()
+        keys = ("action_id", "po_id", "part_no", "planned_qty", "remaining_qty", "status", "created_at")
+        return [{key: json.loads(row[0])[key] for key in keys} for row in rows]
+    except (sqlite3.Error, KeyError, TypeError, ValueError):
+        raise ValueError("Local simulation history is unavailable.") from None

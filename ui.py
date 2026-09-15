@@ -13,6 +13,7 @@ from repositories import RepositoryError
 from responder import generate_response, fulfillment_facts
 from router import execute_intent
 import tools
+import transactions
 from ui_models import dataset_view, result_view
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,7 @@ ACTIONS = {
     "Check Part": (tools.check_part, "evaluate_part_eligibility", "Part Number", "part_no"),
     "Check Claim": (tools.check_claim, "evaluate_claim_consistency", "Claim ID", "claim_id"),
     "Scan Operational Risks": (tools.scan_anomalies, "scan_known_data_quality_issues", None, None),
+    "Plan Fulfillment": (tools.plan_fulfillment, "plan_fulfillment", "PO ID", "fulfillment_po"),
 }
 
 
@@ -38,25 +40,57 @@ def run_copilot(user_text, client):
     response = generate_response(user_text, execution, client)
     view = None
     if execution.result is not None and execution.error is None:
-        display_result = execution.result
-        if isinstance(display_result, FulfillmentPlan):
-            styles = {"FULLY_FULFILLABLE": DecisionStatus.PASS,
-                      "PARTIALLY_FULFILLABLE": DecisionStatus.WARNING,
-                      "NO_STOCK": DecisionStatus.WARNING, "BLOCKED": DecisionStatus.BLOCKED}
-            display_result = DecisionResult(
-                styles[execution.result.status.value], "Fulfillment Plan — proposed only; nothing shipped.",
-                fulfillment_facts(execution.result, execution.po_id),
-                execution.result.issues, execution.result.evidence,
-            )
-        view = result_view(
-            display_result, action=parsed.intent,
-            tool=execution.tool_name, check=execution.tool_name,
+        view = _execution_view(execution.result, parsed.intent, execution.tool_name, execution.po_id)
+    return {"message": response.text, "view": view, "intent": parsed.intent,
+            "plan": execution.result if isinstance(execution.result, FulfillmentPlan) else None,
+            "po_id": execution.po_id}
+
+
+def _execution_view(result, action, tool, po_id=None, check=None):
+    display = result
+    if isinstance(result, FulfillmentPlan):
+        styles = {"FULLY_FULFILLABLE": DecisionStatus.PASS,
+                  "PARTIALLY_FULFILLABLE": DecisionStatus.WARNING,
+                  "NO_STOCK": DecisionStatus.WARNING, "BLOCKED": DecisionStatus.BLOCKED}
+        display = DecisionResult(
+            styles[result.status.value], "Fulfillment Plan — proposed only; nothing shipped.",
+            fulfillment_facts(result, po_id), result.issues, result.evidence,
         )
-        if isinstance(execution.result, FulfillmentPlan):
-            view["status"]["label"] = execution.result.status.value
-            view["checks"][0]["Outcome"] = execution.result.status.value
-            view["fulfillment"] = fulfillment_facts(execution.result, execution.po_id)
-    return {"message": response.text, "view": view, "intent": parsed.intent}
+    view = result_view(display, action=action, tool=tool, check=check or tool)
+    if isinstance(result, FulfillmentPlan):
+        view["status"]["label"] = result.status.value
+        view["checks"][0]["Outcome"] = result.status.value
+        view["fulfillment"] = fulfillment_facts(result, po_id)
+    return view
+
+
+def _render_action(record):
+    plan = record.get("plan")
+    if not isinstance(plan, FulfillmentPlan) or plan.fulfilled_qty <= 0:
+        return
+    st.subheader("Proposed Fulfillment Action")
+    st.caption("POC Simulation — no ERP, inventory, shipment, or PO source data will be modified.")
+    st.text(f"PO: {record['po_id']} · Part: {plan.part_no}")
+    st.text(f"Planned quantity: {plan.fulfilled_qty} · Remaining unresolved: {plan.remaining_qty}")
+    st.dataframe([{"Source location": a.source_location, "Proposed quantity": a.proposed_qty}
+                  for a in plan.allocations], hide_index=True)
+    if st.button("Confirm simulated fulfillment", key="confirm_simulated_fulfillment"):
+        record["action_result"] = transactions.execute_simulated_fulfillment(
+            record["po_id"], plan, confirmed=True,
+        )
+    outcome = record.get("action_result")
+    if outcome:
+        if outcome.action is None:
+            st.error(outcome.error or "Simulated action rejected.")
+        else:
+            action = outcome.action
+            st.success("Existing simulated action shown." if outcome.status == "ALREADY_EXISTS"
+                       else "Simulated fulfillment action recorded.")
+            st.text(f"{action.action_id} · {action.status} · {outcome.status}")
+            st.text(f"Planned quantity: {action.planned_qty} · Remaining unresolved: {action.remaining_qty}")
+            st.text(f"Created: {action.created_at}")
+            st.dataframe([{"Source location": a.source_location, "Proposed quantity": a.proposed_qty}
+                          for a in action.allocations], hide_index=True)
 
 
 def _prefill(action, key=None, value=None, qty=None):
@@ -120,6 +154,13 @@ def _render_trace(record):
     if record is None:
         st.info("Run a check to see the source records and decision outcome.")
         return
+    outcome = record.get("action_result")
+    if outcome:
+        st.text("Human confirmation received; authoritative revalidation requested.")
+        st.text(f"Simulation outcome: {outcome.status}")
+        if outcome.action:
+            st.text("Authoritative revalidation passed.")
+            st.text(f"{outcome.action.action_id} · {outcome.action.status}")
     view = record["view"]
     if record.get("intent"):
         st.text(f"Parsed intent: {record['intent']}")
@@ -217,10 +258,13 @@ def render_command_center(metadata):
             st.session_state["latest"] = None
             try:
                 with st.spinner("Evaluating operational data…"):
-                    result = function(*inputs)
-                view = result_view(result, action=action, tool=function.__name__, check=check)
+                    result = function(po_id=inputs[0]) if action == "Plan Fulfillment" else function(*inputs)
+                view = _execution_view(result, action, function.__name__,
+                                       inputs[0] if action == "Plan Fulfillment" else None, check)
                 record = {
                     "view": view,
+                    "plan": result if isinstance(result, FulfillmentPlan) else None,
+                    "po_id": inputs[0] if action == "Plan Fulfillment" else None,
                     "inputs": inputs,
                     "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
                     "fingerprint": metadata["sha256"][:16],
@@ -248,6 +292,7 @@ def render_command_center(metadata):
                 f"Inputs: {input_label}"
             )
             _render_result(latest["view"])
+            _render_action(latest)
     with right:
         _render_trace(st.session_state.get("latest"))
     with st.expander("Session History", expanded=False):
@@ -270,3 +315,13 @@ def render_command_center(metadata):
         else:
             st.caption("Completed checks will appear here for this session only.")
         st.caption("Last 20 checks. History is not written to a database.")
+
+    with st.expander("Recent POC simulated actions", expanded=False):
+        try:
+            recent = transactions.list_simulated_actions()
+            if recent:
+                st.dataframe(recent, hide_index=True)
+            else:
+                st.caption("No POC simulated actions recorded.")
+        except (OSError, ValueError):
+            st.info("Local simulation history is unavailable.")
