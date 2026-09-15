@@ -1,132 +1,137 @@
 # DealerBRAIN
 
-**Agentic After-Sales Stock Rescue Copilot** · Team Stock Overflow
+**Agentic After-Sales Stock Rescue Copilot** — turn natural-language after-sales questions into evidence-backed decisions, warehouse fulfillment plans, and human-confirmed POC actions.
 
-A hackathon POC foundation for an after-sales stock rescue copilot, structured
-for readable, testable business tools and replaceable data adapters.
+## Problem
+
+After-sales teams must reconcile purchase orders, stock shortages, dealer eligibility, claims, and operating procedures across disconnected records. A useful answer needs both an actionable plan and traceable evidence.
+
+## Solution
+
+DealerBRAIN combines a Streamlit chat copilot with controlled deterministic tools. It extracts structured intent, checks operational facts, plans network fulfillment, retrieves relevant Knowledge guidance, and explains results with source citations. Guided checks remain available without configured AI.
+
+## Why DealerBRAIN Is Different
+
+- **Facts before prose:** deterministic tools establish business facts; the LLM interprets requests and explains verified results.
+- **Honest fulfillment:** allocations use authoritative warehouse/location inventory, with no fabricated warehouse-to-dealer ownership mapping.
+- **Grounded guidance:** deterministic lexical retrieval searches the operational Knowledge table without embeddings or a vector database.
+- **Human control:** proposed fulfillment requires explicit confirmation; duplicate submissions reuse the same simulated action ID.
+
+## Golden Demo Workflow
+
+Ask **“Can PO-2026-1026 be fulfilled?”** and inspect the fulfillment plan and evidence:
+
+**20 requested → 4 network available → Pune 3 + Frankfurt 1 → 4 planned → 16 unresolved → human-confirmed POC simulation.**
+
+The authoritative sources are `WH-IN-PUN` and `WH-EU-FRA`. Review the proposal, then select **Confirm simulated fulfillment**. The initial action returns `CREATED`; a duplicate returns `ALREADY_EXISTS` with the same action ID. Nothing has physically shipped or transferred.
+
+For governance, ask **“Process PO-2026-1106”**: the PO is blocked because dealer **D007 is suspended**. Ask **“What is the procedure for a suspended dealer?”** to retrieve grounded Knowledge guidance.
 
 ## Architecture
 
-Streamlit UI → Application / Orchestrator → Safe Business Tools → Rules /
-Guardrails → Repository / Data Access → DuckDB / SQLite.
+```text
+Streamlit chat → structured intent → allowlisted router → deterministic tools
+                                                        ├─ rules / governance
+                                                        ├─ network fulfillment planner
+                                                        └─ Knowledge retrieval
+                                                                  ↓
+                                                        repositories → DuckDB
+                                                                  ↓
+                                         grounded response + evidence trace
 
-The LLM is an orchestration and explanation layer. It is not the system of record.
-See [PROJECT_RULES.md](PROJECT_RULES.md) for the engineering rules.
+Explicit human confirmation → revalidation → SQLite POC action store
+```
 
-`app.py` provides the UI; `config.py` loads environment settings and defines
-branding and paths. `data_loader.py` reads and fingerprints Excel,
-`data_validation.py` reports structural errors and preserved anomalies, and
-`database.py` separates atomic ingestion writes from read-only access.
-`tools.py`, `rules.py`, `workflows.py`, `llm_client.py`, and `rag.py` reserve future layers.
-SQLite is included in Python's standard library and needs no extra package.
+A provider-neutral, OpenAI-compatible LLM adapter handles interpretation and explanation. Excel ingestion validates and fingerprints the supplied dataset; DuckDB serves operational reads, while SQLite stores separate simulated actions.
 
-## Local setup
+## Safety & Governance
 
-Requires **Python 3.11+**. From the repository directory:
+- The LLM does not calculate authoritative business facts or authorize transactions.
+- Every fulfillment action requires explicit human confirmation and deterministic revalidation.
+- **POC simulated actions do not modify ERP, physical inventory, shipments, or source PO data.**
+- `ANSWER_KEY` and workbook `README` are excluded from runtime operational access.
+- Repositories expose fixed, parameterized read operations, not arbitrary SQL.
+- Anomaly and governance checks preserve source inconsistencies rather than silently correcting them.
+- Rendering does not trigger LLM calls or business writes. A submitted copilot request uses at most one intent call and one response call, with no retries.
+- Secrets stay environment-only; never commit `.env` or credentials. Provider failures use safe messages and deterministic response fallbacks.
+
+See [PROJECT_RULES.md](PROJECT_RULES.md) for engineering constraints.
+
+## Evidence & Decision Trace
+
+The right-side panel preserves deterministic outcomes, invoked tools/checks, issue codes, source tables, record IDs, and POC action audit details. Citations come from tool results, never from LLM prose. Composite PO keys are formatted for readability without changing their underlying identifiers. No chain-of-thought or invented confidence scores are shown.
+
+## Tech Stack
+
+Python 3.11+, Streamlit, DuckDB, SQLite, Excel ingestion, standard-library lexical retrieval, and an OpenAI-compatible HTTP LLM adapter. Pytest and Ruff support validation; GitHub Actions runs them for pull requests and pushes to `main`.
+
+## Quick Start
+
+From the repository root:
 
 ```sh
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt -r requirements-dev.txt
-cp .env.example .env
+cp .env.example .env  # First setup only; preserve existing settings.
 ```
 
-The environment values can remain blank for this foundation. Keep real secrets
-in environment variables and never commit them.
-
-Run:
-
-```sh
-streamlit run app.py
-```
-
-Test:
-
-```sh
-pytest
-```
-
-Lint:
-
-```sh
-ruff check .
-```
-
-## Current POC status
-
-Application, ingestion, repositories, and deterministic business rules are implemented.
-AI and workflow layers remain
-pending; this step makes no LLM/API calls or business recommendations.
-
-Place the supplied workbook at `data/after_sales.xlsx` (the Excel file from
-`After Sales.zip`). Initialize explicitly with:
+Place the supplied workbook from `After Sales.zip` at `data/after_sales.xlsx`, then:
 
 ```sh
 python data_loader.py
+streamlit run app.py
 ```
 
-The app also initializes the data layer. A missing/unreadable workbook or invalid
-schema produces an actionable error; no replacement data is generated.
-The eight operational sheets load into `runtime/dealerbrain.duckdb`.
-`README` and `ANSWER_KEY` are never read as operational data or loaded into DuckDB.
-The workbook remains unchanged. Source files in `data/` remain trackable;
-runtime files are ignored.
+The app also initializes data when needed. Missing or invalid source data produces an error, not replacement data. Runtime databases are Git-ignored.
 
-Duplicate keys, unknown references, negative quantities, EUR currency mismatches,
-and inconsistent inventory quantities produce warnings without correction.
-Inventory is warehouse-based. Purchase-order uniqueness uses PO number plus line.
-SHA-256, source filename, UTC ingestion time, schema, row counts, and validation
-issues are stored in a separate metadata table. Identical validated source snapshots
-reuse the existing database; changed snapshots replace operational tables atomically.
-Future business tools and orchestration must retrieve operational records only
-through `Repository` in `repositories.py`. `database.py` remains infrastructure
-for ingestion, connection lifecycle, and technical verification.
+`LLM_ENABLED=false` keeps guided deterministic checks usable. For chat, configure `LLM_ENABLED`, `LLM_API_KEY`, `LLM_BASE_URL`, and `LLM_MODEL` using `.env.example`; retain the configured timeout and output-token limits. Provider URLs require HTTPS, except HTTP loopback development at `localhost`, `127.0.0.1`, or `::1`. Local Ollama can use `http://localhost:11434/v1` with the existing compatible adapter. No provider endpoint or pricing is assumed; “Configured” indicates settings availability, not verified connectivity.
 
-Repository methods return `RepositoryResult(data, evidence)` with immutable
-source-row models. Single-record misses return `data=None`; list misses return
-`data=[]`, both with empty evidence. `get_purchase_order` returns all PO lines.
-Evidence uses the source table and business key; PO evidence encodes
-`[po_no, po_line_no]` as JSON to distinguish lines. Dates and blank strings retain
-their source representation, and database nulls remain `None`.
+## Demo Readiness
 
-Lookups use fixed, parameterized SELECTs through read-only connections. There is
-no raw SQL or arbitrary-table repository API. Database/schema failures and
-ambiguous duplicate single-record keys raise `RepositoryError`; ordinary missing
-records do not. Repository tests use temporary synthetic databases and run with
-the existing `pytest` command. No new dependencies are needed.
+```sh
+python scripts/demo_smoke.py
+python evaluation.py
+```
 
-## Deterministic business rules
+Recorded demo results: **Demo smoke: 7/7**; **live local Qwen golden evaluation: 10/10**. These are observed results, not guarantees for every model or configuration. Live evaluation requires configured AI and may contact its endpoint.
 
-`RulesEngine` in `rules.py` evaluates stock, dealer/part ordering eligibility,
-purchase orders, claim/shipment consistency, warranty dates, and data-quality
-anomalies. Results contain a status, immutable facts, structured issues, and
-operational evidence. Database failures still raise repository errors.
+For repository quality checks, run `pytest` and `ruff check .`. Dataset Health, system diagnostics, session history, and recent POC actions remain available in secondary UI panels.
 
-`tools.py` exposes `check_po`, `check_stock`, `check_dealer`, `check_part`,
-`check_claim`, `check_warranty`, and `scan_anomalies`. Input validation is shared
-with rule entry points. These endpoints retrieve facts only through repositories
-and perform no transactions or network/LLM calls.
+## EC2 Hackathon Deployment
 
-- Stock uses explicit `available_qty` across warehouses, preserving negatives.
-  Missing/invalid inventory blocks calculation; shortages and negatives warn.
-  PO demand for the same part is summed across lines before comparing availability.
-- Active dealers/parts pass ordering eligibility. Suspended/inactive dealers and
-  discontinued/inactive parts block. Unknown dealer status blocks; unknown part
-  status warns. PO checks assess current new-order eligibility, without modifying
-  historical orders. Scanner eligibility flags apply to Open, Confirmed, and
-  Backordered orders only.
-- PO unit prices and quantities must be positive. Currency mismatches against
-  EUR-named price columns only warn; there is no supported-currency policy.
-- Claims resolve shipments through PO lines matching both dealer and part.
-  Missing/inconsistent links and Not Received/Delivered contradictions warn;
-  they do not establish fraud or reject claims.
-- Warranty uses purchase date plus calendar months, clamping month-end dates
-  to the last valid day and including the calculated end date. This is a date-window
-  convention, not claim approval. Missing/invalid inputs return NOT_APPLICABLE;
-  a claim before purchase blocks; dates outside the window warn.
+On Ubuntu EC2 with Python 3.11+, clone the team's repository using its actual Git URL, or run `git pull` in an existing checkout. From the repository root:
 
-Run all rules and regression tests with `pytest`. The existing Dataset Health
-UI is unchanged; no business workflow UI is added.
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+cp .env.example .env  # First setup only; preserve an existing local .env.
+```
 
-GitHub Actions installs runtime and development dependencies on Python 3.11,
-then runs Ruff and pytest for pull requests and pushes to `main`.
+Keep `LLM_ENABLED=false` until organizer/provider details are supplied. Configure the base URL, model, and credential locally when available; non-loopback providers require HTTPS. No organizer endpoint or pricing is assumed. The commented Ollama example is for local development; this launch does not start Ollama. Never commit credentials.
+
+Ensure `data/after_sales.xlsx` exists, then run:
+
+```sh
+python scripts/preflight.py
+python data_loader.py
+./scripts/run_ec2.sh
+```
+
+Preflight checks local prerequisites; ingestion generates runtime DuckDB data. The foreground launch binds `0.0.0.0:8501`; use `PORT=8502 ./scripts/run_ec2.sh` for another port. Access `http://<EC2-host>:8501` subject to hackathon and security-group rules. Runtime databases remain local and Git-ignored. Public or production exposure needs proper TLS and a reverse proxy, outside this POC deployment setup.
+
+## Project Structure
+
+| Area | Files |
+| --- | --- |
+| Copilot presentation | `app.py`, `ui.py`, `ui_models.py` |
+| Intent, routing, explanation | `intent.py`, `router.py`, `responder.py`, `prompts.py`, `llm_client.py` |
+| Deterministic operations | `tools.py`, `rules.py`, `fulfillment.py`, `rag.py` |
+| Data and POC actions | `models.py`, `repositories.py`, `database.py`, `data_loader.py`, `data_validation.py`, `transactions.py` |
+| Configuration and verification | `config.py`, `evaluation.py`, `scripts/`, `tests/` |
+| Source and runtime storage | `data/`, `runtime/` |
+
+## Team Stock Overflow
+
+Built by **Team Stock Overflow** as a hackathon POC for evidence-grounded after-sales decisions and human-controlled stock rescue.

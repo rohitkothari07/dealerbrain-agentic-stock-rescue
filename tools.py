@@ -3,6 +3,7 @@
 import logging
 
 from rules import RulesEngine
+from fulfillment import build_fulfillment_plan, build_fulfillment_plan_for_po
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,8 @@ __all__ = [
     "check_claim",
     "check_warranty",
     "scan_anomalies",
+    "plan_fulfillment",
+    "search_knowledge",
 ]
 
 
@@ -54,3 +57,17 @@ def scan_anomalies(*, engine=None):
     result = (engine or RulesEngine()).scan_known_data_quality_issues()
     logger.info("tool=scan_anomalies issues=%d", len(result))
     return result
+
+
+def plan_fulfillment(part_no=None, requested_qty=None, *, po_id=None, repository=None):
+    if po_id is not None:
+        if part_no is not None or requested_qty is not None:
+            raise ValueError("Provide either PO or part/quantity inputs.")
+        return build_fulfillment_plan_for_po(po_id, repository=repository)
+    return build_fulfillment_plan(part_no, requested_qty, repository=repository)
+
+
+def search_knowledge(query, limit=3):
+    from rag import retrieve_knowledge
+
+    return retrieve_knowledge(query, limit)
