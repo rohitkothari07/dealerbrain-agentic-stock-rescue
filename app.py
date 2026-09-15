@@ -4,6 +4,7 @@ import streamlit as st
 
 from config import APP_NAME, APP_TAGLINE, TEAM_NAME
 from data_loader import DataInitializationError, initialize_data
+from llm_client import get_llm_status
 from ui import ACTIONS, render_command_center, render_dataset_health
 
 
@@ -12,6 +13,7 @@ def main() -> None:
     st.title(APP_NAME)
     st.write(APP_TAGLINE)
     st.caption(f"Team {TEAM_NAME}")
+    llm_status = get_llm_status()
     try:
         metadata = initialize_data()
     except DataInitializationError as exc:
@@ -24,6 +26,7 @@ def main() -> None:
         "AI Orchestrator: Pending"
     )
     st.caption("Deterministic tools · Read-only business checks · AI orchestration is not enabled")
+    st.caption(f"LLM Adapter: {llm_status.state} · {llm_status.detail}")
     st.divider()
     render_command_center(metadata)
     st.divider()

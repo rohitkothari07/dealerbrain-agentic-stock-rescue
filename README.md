@@ -145,3 +145,46 @@ presentation helpers are tested without brittle browser automation tests.
 
 GitHub Actions installs runtime and development dependencies on Python 3.11,
 then runs Ruff and pytest for pull requests and pushes to `main`.
+
+## Step 6 optional LLM adapter
+
+The deterministic command center works without `.env` or LLM credentials.
+`LLM_ENABLED=false` is the default. The UI reports Disabled, Not Configured, or
+Configured from local settings only; Configured does not mean provider connectivity
+has been tested. AI orchestration remains pending and no UI action invokes the LLM.
+
+Use the placeholders in `.env.example` to configure `LLM_ENABLED`, `LLM_API_KEY`,
+`LLM_BASE_URL`, `LLM_MODEL`, `LLM_TIMEOUT_SECONDS`, `LLM_MAX_OUTPUT_TOKENS`, and
+`LLM_TEMPERATURE`. Never commit `.env` or API keys. Credentials remain environment-only.
+The API base URL must use HTTPS; the adapter appends `/chat/completions` and sends
+OpenAI-compatible text messages with Bearer authentication. All provider assumptions
+stay in `llm_client.py`. No public endpoint is selected automatically.
+
+Only an explicit `LLMClient().chat(messages)` call can contact the endpoint.
+There are no startup probes, retries, redirects, or proxy forwarding. Each request
+has a configured socket timeout, an output-token ceiling, a 32,000-character input
+limit, and a 2 MB response limit. Provider/network failures map to safe adapter
+exceptions without response bodies, credentials, or request details.
+
+For offline development, instantiate `FakeLLMClient(text="Configured mock text")`.
+It returns deterministic text and optional configured token counts without HTTP.
+Tests intercept HTTP and prohibit external connections; they never spend LLMaaS budget.
+The fake is explicit and is never silently substituted for a failed real request.
+
+`client.usage.snapshot()` exposes in-memory attempt/success counts, provider token
+totals, and estimated spend. Missing usage stays unavailable, rather than becoming
+zero. Trackers retain counters only, not prompts or generated text. Real clients
+share a process tracker by default; fake clients have isolated trackers.
+
+Pricing is optional: set both `LLM_INPUT_PRICE_PER_MILLION` and
+`LLM_OUTPUT_PRICE_PER_MILLION` only when authoritative rates are known. Without
+prices, estimated spend is unavailable and `LLM_BUDGET_USD` cannot enforce a dollar
+ceiling. With prices and a budget, calls are serialized and further requests stop
+once reported spend reaches the soft ceiling. One request can exceed that ceiling;
+this is not a prepaid/account-level cap. Missing usage or failed requests make
+accounting uncertain and block further budget-controlled priced calls. Process
+restart clears counters; provider billing remains authoritative.
+
+`prompts.py` supplies concise evidence-grounded explanation instructions. The
+adapter has no SQL executor, tool execution, routing, RAG, business decisions, or
+transaction capability. Model text is not treated as an authoritative business fact.
