@@ -3,6 +3,7 @@
 import logging
 
 from rules import RulesEngine
+from fulfillment import build_fulfillment_plan
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,7 @@ __all__ = [
     "check_claim",
     "check_warranty",
     "scan_anomalies",
+    "plan_fulfillment",
 ]
 
 
@@ -54,3 +56,7 @@ def scan_anomalies(*, engine=None):
     result = (engine or RulesEngine()).scan_known_data_quality_issues()
     logger.info("tool=scan_anomalies issues=%d", len(result))
     return result
+
+
+def plan_fulfillment(part_no, requested_qty, *, repository=None):
+    return build_fulfillment_plan(part_no, requested_qty, repository=repository)
