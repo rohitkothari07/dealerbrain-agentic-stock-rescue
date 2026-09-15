@@ -10,7 +10,8 @@ from rules import DecisionResult, DecisionStatus
 from intent import parse_intent
 from llm_client import LLMClient, get_llm_status
 from repositories import RepositoryError
-from responder import generate_response, fulfillment_facts
+from responder import generate_response, fulfillment_facts, knowledge_facts
+from rag import KnowledgeRetrieval
 from router import execute_intent
 import tools
 import transactions
@@ -48,6 +49,12 @@ def run_copilot(user_text, client):
 
 def _execution_view(result, action, tool, po_id=None, check=None):
     display = result
+    if isinstance(result, KnowledgeRetrieval):
+        display = DecisionResult(
+            DecisionStatus.PASS if result.status == "MATCHED" else DecisionStatus.NOT_APPLICABLE,
+            "Retrieved Knowledge source records; retrieval score is lexical relevance.",
+            knowledge_facts(result), (), tuple(m.evidence for m in result.matches),
+        )
     if isinstance(result, FulfillmentPlan):
         styles = {"FULLY_FULFILLABLE": DecisionStatus.PASS,
                   "PARTIALLY_FULFILLABLE": DecisionStatus.WARNING,
@@ -61,6 +68,10 @@ def _execution_view(result, action, tool, po_id=None, check=None):
         view["status"]["label"] = result.status.value
         view["checks"][0]["Outcome"] = result.status.value
         view["fulfillment"] = fulfillment_facts(result, po_id)
+    if isinstance(result, KnowledgeRetrieval):
+        view["status"]["label"] = result.status
+        view["checks"][0]["Outcome"] = result.status
+        view["knowledge"] = knowledge_facts(result)["records"]
     return view
 
 
@@ -117,6 +128,8 @@ def _render_result(view):
     st.caption("DETERMINISTIC COPILOT RESULT")
     getattr(st, view["status"]["style"])(view["status"]["label"])
     st.text(view["summary"])
+    if view.get("knowledge"):
+        st.dataframe(view["knowledge"], hide_index=True)
     if view.get("fulfillment"):
         facts = view["fulfillment"]
         st.subheader("Fulfillment Plan")
@@ -166,6 +179,8 @@ def _render_trace(record):
         st.text(f"Parsed intent: {record['intent']}")
     st.text(f"Action: {view['action']}")
     st.text(f"Tool: {view['tool']}")
+    if view.get("knowledge"):
+        st.dataframe(view["knowledge"], hide_index=True)
     st.text(f"Outcome: {view['status']['label']}")
     st.caption(f"Evaluated: {record['time']} · Dataset: {record['fingerprint']}")
     st.dataframe(view["checks"], hide_index=True, width="stretch")

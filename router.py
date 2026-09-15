@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from fulfillment import FulfillmentPlan
 from intent import ParsedIntent
+from rag import KnowledgeRetrieval
 from rules import BusinessIssue, DecisionResult, valid_identifier
 import tools
 
@@ -12,7 +13,7 @@ import tools
 class ToolExecution:
     intent: str
     tool_name: str | None = None
-    result: DecisionResult | list[BusinessIssue] | FulfillmentPlan | None = None
+    result: DecisionResult | list[BusinessIssue] | FulfillmentPlan | KnowledgeRetrieval | None = None
     error: str | None = None
     po_id: str | None = None
 
@@ -40,6 +41,8 @@ def execute_intent(parsed_intent: ParsedIntent) -> ToolExecution:
         name, tool, args = "check_claim", tools.check_claim, (parsed_intent.claim_id,)
     elif intent == "PLAN_FULFILLMENT":
         name, tool, args = "plan_fulfillment", tools.plan_fulfillment, (parsed_intent.po_id,)
+    elif intent == "SEARCH_KNOWLEDGE":
+        name, tool, args = "search_knowledge", tools.search_knowledge, (parsed_intent.query, 3)
     elif intent == "SCAN_ANOMALIES":
         name, tool, args = "scan_anomalies", tools.scan_anomalies, ()
     else:

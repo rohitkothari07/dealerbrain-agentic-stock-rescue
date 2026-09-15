@@ -194,6 +194,7 @@ def test_answer_key_unavailable_through_every_operation(repo):
         "get_inventory_for_part",
         "get_inventory_for_location",
         "get_knowledge_record",
+        "list_knowledge",
         "list_claims_for_dealer",
         "list_purchase_orders_for_dealer",
         "list_inventory",
@@ -201,7 +202,7 @@ def test_answer_key_unavailable_through_every_operation(repo):
         "list_claims",
     }
     for name in methods:
-        if name in {"list_inventory", "list_purchase_orders", "list_claims"}:
+        if name in {"list_inventory", "list_purchase_orders", "list_claims", "list_knowledge"}:
             result = getattr(repo, name)()
             assert all(e.source_table not in {"ANSWER_KEY", "README"} for e in result.evidence)
             assert "synthetic exclusion canary" not in repr(result)
