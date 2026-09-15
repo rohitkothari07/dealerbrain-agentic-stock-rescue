@@ -23,9 +23,9 @@ def main() -> None:
     ready = all(callable(action[0]) for action in ACTIONS.values())
     st.caption(
         f"Data: Ready · Decision Engine: {'Ready' if ready else 'Unavailable'} · "
-        "AI Orchestrator: Pending"
+        f"Copilot AI: {llm_status.state}"
     )
-    st.caption("Deterministic tools · Read-only business checks · AI orchestration is not enabled")
+    st.caption("Deterministic tools · Read-only business checks · Optional natural-language copilot")
     st.caption(f"LLM Adapter: {llm_status.state} · {llm_status.detail}")
     st.divider()
     render_command_center(metadata)

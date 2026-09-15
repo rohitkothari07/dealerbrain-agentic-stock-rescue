@@ -5,7 +5,11 @@ import logging
 
 import streamlit as st
 
+from intent import parse_intent
+from llm_client import LLMClient, get_llm_status
 from repositories import RepositoryError
+from responder import generate_response
+from router import execute_intent
 import tools
 from ui_models import dataset_view, result_view
 
@@ -18,6 +22,25 @@ ACTIONS = {
     "Check Claim": (tools.check_claim, "evaluate_claim_consistency", "Claim ID", "claim_id"),
     "Scan Operational Risks": (tools.scan_anomalies, "scan_known_data_quality_issues", None, None),
 }
+
+
+def run_copilot(user_text, client):
+    """Submit once; return display data with provenance exclusively from the tool."""
+    if get_llm_status().state != "Configured":
+        return {
+            "message": "Natural-language interpretation requires configured AI. "
+            "Use the guided checks below.", "view": None,
+        }
+    parsed = parse_intent(user_text, client)
+    execution = execute_intent(parsed)
+    response = generate_response(user_text, execution, client)
+    view = None
+    if execution.result is not None and execution.error is None:
+        view = result_view(
+            execution.result, action=parsed.intent,
+            tool=execution.tool_name, check=execution.tool_name,
+        )
+    return {"message": response.text, "view": view, "intent": parsed.intent}
 
 
 def _prefill(action, key=None, value=None, qty=None):
@@ -74,6 +97,8 @@ def _render_trace(record):
         st.info("Run a check to see the source records and decision outcome.")
         return
     view = record["view"]
+    if record.get("intent"):
+        st.text(f"Parsed intent: {record['intent']}")
     st.text(f"Action: {view['action']}")
     st.text(f"Tool: {view['tool']}")
     st.text(f"Outcome: {view['status']['label']}")
@@ -93,10 +118,40 @@ def render_command_center(metadata):
     if st.session_state.get("dataset_sha") != metadata["sha256"]:
         st.session_state["history"] = []
         st.session_state["latest"] = None
+        st.session_state["copilot_notice"] = None
         st.session_state["dataset_sha"] = metadata["sha256"]
     left, right = st.columns([1.25, 1], gap="large")
     with left:
         st.subheader("Copilot Command Center")
+        st.subheader("Ask DealerBRAIN")
+        with st.form("copilot", clear_on_submit=True):
+            question = st.text_input(
+                "Your request", max_chars=4000,
+                placeholder="Ask about a PO, part, dealer, claim, stock, or operational risks...",
+            )
+            ask = st.form_submit_button("Ask DealerBRAIN")
+        if ask:
+            st.session_state["latest"] = None
+            st.session_state["copilot_notice"] = None
+            try:
+                with st.spinner("Checking your request…"):
+                    interaction = run_copilot(question, LLMClient())
+                if interaction["view"] is None:
+                    st.session_state["copilot_notice"] = interaction["message"]
+                else:
+                    record = {
+                        **interaction, "inputs": [],
+                        "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                        "fingerprint": metadata["sha256"][:16],
+                    }
+                    st.session_state["latest"] = record
+                    st.session_state["history"] = (st.session_state["history"] + [record])[-20:]
+            except (TypeError, ValueError, RepositoryError):
+                st.session_state["copilot_notice"] = (
+                    "This request could not be displayed safely. Use the guided checks below."
+                )
+        if st.session_state.get("copilot_notice"):
+            st.info(st.session_state["copilot_notice"])
         st.caption("Choose a check. Decisions come from Python rules and operational records.")
         with st.expander("Demo Scenarios", expanded=False):
             st.caption("Shortcuts fill inputs only. Select Run check to evaluate live data.")
@@ -133,6 +188,7 @@ def render_command_center(metadata):
                 st.caption("Scan operational records for supported data-quality risks.")
             submitted = st.form_submit_button("Run check", type="primary", width="stretch")
         if submitted:
+            st.session_state["copilot_notice"] = None
             # Clear the previous display before attempting a new result, including on errors.
             st.session_state["latest"] = None
             try:
@@ -158,9 +214,14 @@ def render_command_center(metadata):
                 st.error("This check could not be displayed safely. Verify the inputs and retry.")
         latest = st.session_state.get("latest")
         if latest:
+            if latest.get("message"):
+                st.text(latest["message"])
+            input_label = ", ".join(str(i) for i in latest["inputs"]) or latest.get(
+                "intent", "Operational scan"
+            )
             st.caption(
                 f"Last completed check: {latest['view']['action']} · "
-                f"Inputs: {', '.join(str(i) for i in latest['inputs']) or 'Operational scan'}"
+                f"Inputs: {input_label}"
             )
             _render_result(latest["view"])
     with right:
