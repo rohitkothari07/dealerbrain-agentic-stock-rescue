@@ -23,7 +23,7 @@ def execute_intent(parsed_intent: ParsedIntent) -> ToolExecution:
     if not isinstance(parsed_intent, ParsedIntent) or not isinstance(parsed_intent.intent, str):
         return ToolExecution("UNKNOWN", error="Invalid parsed intent.")
     intent = parsed_intent.intent
-    if intent == "UNKNOWN":
+    if intent in {"UNKNOWN", "GENERAL_CHAT"}:
         return ToolExecution(intent)
     if intent == "CHECK_PO":
         name, tool, args = "check_po", tools.check_po, (parsed_intent.po_id,)

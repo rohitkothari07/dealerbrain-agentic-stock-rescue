@@ -19,6 +19,18 @@ _TOOLS = {
     "CHECK_DEALER": "check_dealer", "CHECK_PART": "check_part",
     "CHECK_CLAIM": "check_claim", "SCAN_ANOMALIES": "scan_anomalies",
 }
+_GENERAL_FALLBACKS = {
+    "GREETING": "Hi! 👋 I'm DealerBRAIN, your after-sales stock rescue copilot. What can I help you with?",
+    "THANKS": "You're welcome! Send me another PO, part, dealer, claim, or policy question whenever you're ready.",
+    "IDENTITY": "I'm DealerBRAIN — Team Stock Overflow's After-Sales Stock Rescue Copilot, built for i.mobilothon 6.0.",
+    "CAPABILITIES": "I can assess network stock and PO fulfillment, check governance, review supported claims, retrieve Knowledge guidance, and show evidence-backed next steps. Proposed POC_SIMULATED actions still require human approval.",
+    "GOODBYE": "See you next time. I’ll be ready for the next after-sales question.",
+    "CASUAL": "Ready to rescue some after-sales headaches. What are we looking at today?",
+}
+_GENERAL_INSTRUCTION = """You are DealerBRAIN, Team Stock Overflow's friendly After-Sales Stock Rescue Copilot built for i.mobilothon 6.0.
+Be concise, warm, and professional. Have normal casual conversation, but never invent enterprise facts,
+claim ERP connectivity, or say a simulated action changed a real system. For business facts, direct users
+to a PO, part, dealer, claim, stock, or policy question handled by DealerBRAIN's controlled services."""
 _TABLES = {"dealers", "parts", "purchase_orders", "inventory", "claims", "shipments", "knowledge"}
 _FIELDS = (
     "po_no", "po_line_no", "dealer_id", "part_no", "claim_id", "shipment_id",
@@ -159,6 +171,8 @@ def _fallback(context):
 
 def generate_response(user_text, tool_execution, llm_client) -> GroundedResponse:
     """One optional explanation call. Raw user text is unnecessary after intent routing."""
+    if isinstance(tool_execution, ToolExecution) and tool_execution.intent == "GENERAL_CHAT":
+        return generate_general_response(user_text, llm_client, "CASUAL")
     context = _context(tool_execution)
     if context is None:
         return GroundedResponse(
@@ -193,3 +207,41 @@ Keep the answer concise and operational. Never expose hidden reasoning."""
     except LLMError:
         pass  # Includes disabled/configuration/budget errors; never expose provider details.
     return fallback
+
+
+def generate_general_response(user_text, llm_client, conversation_kind="CASUAL") -> GroundedResponse:
+    """One optional general-chat call, with no facts, tools, or operational context."""
+    fallback = GroundedResponse(
+        _GENERAL_FALLBACKS.get(conversation_kind, _GENERAL_FALLBACKS["CASUAL"]),
+        "deterministic", 0, True,
+    )
+    if llm_client is None:
+        return fallback
+    try:
+        response = llm_client.chat(
+            [{"role": "system", "content": _GENERAL_INSTRUCTION},
+             {"role": "user", "content": user_text}],
+            temperature=0.2, max_tokens=96,
+        )
+        if isinstance(response.text, str) and response.text.strip():
+            return GroundedResponse(response.text.strip(), "llm", 0, False)
+    except LLMError:
+        pass
+    return fallback
+
+
+def generate_followup_response(user_text, execution, llm_client, followup_kind):
+    """Explain only the immediately preceding completed tool result."""
+    context = _context(execution)
+    if context is None:
+        return GroundedResponse(
+            "Tell me which PO, part, dealer, claim, or policy you mean and I’ll check it.",
+            "deterministic", 0, True,
+        )
+    if followup_kind == "NEXT" and context["intent"] == "PLAN_FULFILLMENT":
+        return GroundedResponse(
+            "Review the proposed allocation, then request human approval to create a POC_SIMULATED plan. "
+            "No real inventory, shipment, or PO record will be changed.",
+            "deterministic", len(context["evidence"]), True,
+        )
+    return generate_response(user_text, execution, llm_client)
