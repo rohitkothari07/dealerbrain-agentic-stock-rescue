@@ -105,6 +105,14 @@ def test_part(repo):
     assert result.evidence[0].source_table == "parts"
 
 
+def test_list_parts(repo):
+    result = repo.list_parts()
+    assert [row.part_no for row in result.data] == ["P-test"]
+    assert all(isinstance(row, Part) for row in result.data)
+    assert [e.source_table for e in result.evidence] == ["parts"]
+    assert [e.record_key for e in result.evidence] == ["P-test"]
+
+
 def test_purchase_order_all_lines_and_evidence(repo):
     result = repo.get_purchase_order("PO-test")
     assert all(isinstance(row, PurchaseOrder) for row in result.data)
@@ -200,9 +208,12 @@ def test_answer_key_unavailable_through_every_operation(repo):
         "list_inventory",
         "list_purchase_orders",
         "list_claims",
+        "list_parts",
     }
     for name in methods:
-        if name in {"list_inventory", "list_purchase_orders", "list_claims", "list_knowledge"}:
+        if name in {
+            "list_inventory", "list_purchase_orders", "list_claims", "list_knowledge", "list_parts",
+        }:
             result = getattr(repo, name)()
             assert all(e.source_table not in {"ANSWER_KEY", "README"} for e in result.evidence)
             assert "synthetic exclusion canary" not in repr(result)

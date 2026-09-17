@@ -312,3 +312,73 @@ def test_import_performs_no_http(monkeypatch):
     monkeypatch.setattr(urllib.request, "build_opener", factory)
     importlib.reload(llm)
     factory.assert_not_called()
+
+
+IMAGE_BYTES = b"synthetic-png-bytes"
+
+
+def test_describe_image_disabled_no_credentials(monkeypatch):
+    factory = Mock(side_effect=AssertionError("No HTTP expected"))
+    monkeypatch.setattr(llm, "build_opener", factory)
+    with pytest.raises(llm.LLMDisabledError):
+        llm.LLMClient().describe_image(IMAGE_BYTES, "image/png", "Describe the part.")
+    factory.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "image_bytes,mime_type,prompt",
+    [
+        pytest.param(b"", "image/png", "Describe the part.", id="empty-bytes"),
+        pytest.param(IMAGE_BYTES, "application/pdf", "Describe the part.", id="bad-mime"),
+        pytest.param(IMAGE_BYTES, "image/png", "", id="empty-prompt"),
+        pytest.param(IMAGE_BYTES, "image/png", "x" * 2001, id="prompt-too-long"),
+        pytest.param(b"x" * 5_000_001, "image/png", "Describe the part.", id="oversized-image"),
+    ],
+)
+def test_describe_image_invalid_input(configured, monkeypatch, image_bytes, mime_type, prompt):
+    factory = Mock(side_effect=AssertionError("No HTTP expected"))
+    monkeypatch.setattr(llm, "build_opener", factory)
+    with pytest.raises(llm.LLMConfigurationError):
+        configured.describe_image(image_bytes, mime_type, prompt)
+    factory.assert_not_called()
+
+
+def test_describe_image_sends_data_url_and_returns_text(configured, monkeypatch):
+    import base64
+
+    data = {
+        "choices": [{"message": {"content": "A worn brake disc with visible scoring."}}],
+        "model": "test-model",
+    }
+    opener = http_response(monkeypatch, data)
+    result = configured.describe_image(IMAGE_BYTES, "image/png", "Describe the part shown.")
+    assert result.text == "A worn brake disc with visible scoring."
+    request = opener.open.call_args.args[0]
+    payload = json.loads(request.data)
+    assert request.full_url == "https://llm.invalid/v1/chat/completions"
+    system_message, user_message = payload["messages"]
+    assert system_message["role"] == "system"
+    assert user_message["role"] == "user"
+    content = user_message["content"]
+    assert content[0] == {"type": "text", "text": "Describe the part shown."}
+    expected_url = "data:image/png;base64," + base64.b64encode(IMAGE_BYTES).decode("ascii")
+    assert content[1] == {"type": "image_url", "image_url": {"url": expected_url}}
+    assert not {"tools", "functions"} & set(payload)
+
+
+def test_describe_image_usage_and_errors_tracked_like_chat(configured, monkeypatch):
+    error = HTTPError("https://llm.invalid/" + SECRET, 500, SECRET, {}, BytesIO(SECRET.encode()))
+    http_response(monkeypatch, error=error)
+    with pytest.raises(llm.LLMProviderError):
+        configured.describe_image(IMAGE_BYTES, "image/png", "Describe the part.")
+    usage = configured.usage.snapshot()
+    assert usage.request_count == 1
+    assert usage.successful_requests == 0
+
+
+def test_fake_client_describe_image_is_deterministic():
+    fake = llm.FakeLLMClient("Mock description")
+    first = fake.describe_image(IMAGE_BYTES, "image/png", "Describe the part.")
+    second = fake.describe_image(IMAGE_BYTES, "image/png", "Describe the part.")
+    assert first == second == fake._response
+    assert fake.usage.snapshot().request_count == 2

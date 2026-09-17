@@ -5,8 +5,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from models import EvidenceRef, KnowledgeRecord, RepositoryResult
-from rag import retrieve_knowledge
+from models import EvidenceRef, KnowledgeRecord, Part, RepositoryResult
+from rag import retrieve_knowledge, retrieve_parts
 from repositories import Repository
 
 
@@ -17,6 +17,16 @@ def row(key, title, summary=""):
 def source(*records):
     return Mock(spec=["list_knowledge"], list_knowledge=Mock(return_value=RepositoryResult(
         list(records), tuple(EvidenceRef("knowledge", r.doc_id) for r in records),
+    )))
+
+
+def part_row(part_no, part_name, category=None, supplier_name=None):
+    return Part(part_no, part_name, category, None, None, None, None, supplier_name, None, None, None)
+
+
+def part_source(*records):
+    return Mock(spec=["list_parts"], list_parts=Mock(return_value=RepositoryResult(
+        list(records), tuple(EvidenceRef("parts", r.part_no) for r in records),
     )))
 
 
@@ -73,3 +83,48 @@ def test_operational_smoke(query, key, score):
     assert match.evidence == EvidenceRef("knowledge", key)
     assert match.record == repo.get_knowledge_record(key).data
     assert match.score == score
+
+
+def test_parts_ranking_limit_and_evidence():
+    records = [
+        part_row("P2", "Brake Disc", "Brake"),
+        part_row("P1", "Brake Disc", "Brake"),
+        part_row("P3", "Brake Pad", "Suspension"),
+        part_row("P4", "Cooling Hose", "Cooling"),
+    ]
+    result = retrieve_parts("brake disc", 2, repository=part_source(*records))
+    assert result.status == "MATCHED"
+    assert [m.record.part_no for m in result.matches] == ["P1", "P2"]
+    assert [m.score for m in result.matches] == [8, 8]
+    assert result.matches[0].record is records[1]
+    assert result.matches[0].evidence == EvidenceRef("parts", "P1")
+
+
+@pytest.mark.parametrize("query", ["", "?!", "the and of", "astrophysics"])
+def test_parts_no_match(query):
+    result = retrieve_parts(query, repository=part_source(part_row("P1", "Brake Disc")))
+    assert result.status == "NO_MATCH"
+
+
+@pytest.mark.parametrize("limit", [0, -1, True, 101])
+def test_parts_invalid_limit(limit):
+    repo = part_source()
+    assert retrieve_parts("brake", limit, repository=repo).status == "INVALID_INPUT"
+    repo.list_parts.assert_not_called()
+
+
+def test_parts_excluded_provenance():
+    repo = part_source(part_row("P1", "Brake Disc"))
+    repo.list_parts.return_value = RepositoryResult(
+        [part_row("P1", "Brake Disc")], (EvidenceRef("ANSWER_KEY", "P1"),),
+    )
+    assert retrieve_parts("brake disc", repository=repo).matches == ()
+
+
+def test_parts_operational_smoke():
+    repo = Repository()
+    result = retrieve_parts("Brake Disc 256", repository=repo)
+    match = result.matches[0]
+    assert match.evidence == EvidenceRef("parts", "P-10003")
+    assert match.record == repo.get_part("P-10003").data
+    assert match.score == 11
