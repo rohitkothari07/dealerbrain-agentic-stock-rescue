@@ -147,6 +147,72 @@ def result_view(result, *, action, tool, check):
     }
 
 
+def inventory_dashboard_view(inventory_result, parts_result):
+    """Join inventory with the parts catalog for display; source inconsistencies are flagged,
+    never corrected. Callers supply already-fetched RepositoryResult objects, keeping this
+    module free of data access (see repositories.Repository.list_inventory/list_parts)."""
+    _validate_sources(inventory_result.evidence)
+    _validate_sources(parts_result.evidence)
+    parts_by_no = {p.part_no: p for p in parts_result.data if isinstance(p.part_no, str)}
+    rows = []
+    warehouse_totals = {}
+    category_totals = {}
+    for record in inventory_result.data:
+        part = parts_by_no.get(record.part_no)
+        below_reorder = (
+            record.available_qty is not None and record.reorder_point is not None
+            and record.available_qty < record.reorder_point
+        )
+        negative = record.available_qty is not None and record.available_qty < 0
+        category = part.category if part and part.category else "Not supplied"
+        rows.append({
+            "Part No": _text(record.part_no),
+            "Part Name": part.part_name if part and part.part_name else "Not supplied",
+            "Category": category,
+            "Warehouse": _text(record.warehouse_loc),
+            "On Hand": record.on_hand_qty,
+            "Reserved": record.reserved_qty,
+            "Available": record.available_qty,
+            "Reorder Point": record.reorder_point,
+            "Bin": _text(record.bin_location),
+            "Last Count": _text(record.last_count_date),
+            "Below Reorder Point": below_reorder,
+            "Negative Available": negative,
+        })
+        loc = _text(record.warehouse_loc)
+        wh = warehouse_totals.setdefault(loc, {"On Hand": 0, "Available": 0, "Parts": set()})
+        wh["On Hand"] += record.on_hand_qty or 0
+        wh["Available"] += record.available_qty or 0
+        wh["Parts"].add(record.part_no)
+        cat = category_totals.setdefault(category, {"On Hand": 0, "Available": 0, "Parts": set()})
+        cat["On Hand"] += record.on_hand_qty or 0
+        cat["Available"] += record.available_qty or 0
+        cat["Parts"].add(record.part_no)
+    warehouses = [
+        {"Warehouse": loc, "On Hand": t["On Hand"], "Available": t["Available"],
+         "Distinct Parts": len(t["Parts"])}
+        for loc, t in sorted(warehouse_totals.items())
+    ]
+    categories = [
+        {"Category": cat, "On Hand": t["On Hand"], "Available": t["Available"],
+         "Distinct Parts": len(t["Parts"])}
+        for cat, t in sorted(category_totals.items())
+    ]
+    return {
+        "rows": rows,
+        "warehouses": warehouses,
+        "categories": categories,
+        "summary": {
+            "distinct_parts": len({r.part_no for r in inventory_result.data if r.part_no}),
+            "total_on_hand": sum(r.on_hand_qty or 0 for r in inventory_result.data),
+            "total_available": sum(r.available_qty or 0 for r in inventory_result.data),
+            "warehouse_count": len(warehouses),
+            "below_reorder_count": sum(1 for r in rows if r["Below Reorder Point"]),
+            "negative_available_count": sum(1 for r in rows if r["Negative Available"]),
+        },
+    }
+
+
 def dataset_view(metadata):
     """Only operational table summaries are eligible for Dataset Health."""
     tables = [t for t in metadata["tables"] if t["table"] in OPERATIONAL_TABLES]

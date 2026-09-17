@@ -1,5 +1,6 @@
 """Optional OpenAI-compatible HTTP adapter; no network until explicit chat invocation."""
 
+import base64
 from dataclasses import dataclass
 import json
 from http.client import HTTPException
@@ -15,6 +16,18 @@ from config import LLMSettings
 from prompts import DEALERBRAIN_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
+
+# Vision calls describe a photo only; identity of any catalog part remains a
+# deterministic lexical-match decision made outside the LLM (see rag.retrieve_parts).
+_VISION_INSTRUCTION = """You are looking at one photo submitted for an after-sales parts claim.
+Describe only what is visibly evident: part type/category, material, color, connectors,
+distinguishing marks, and visible damage. Use plain everyday part terminology.
+Never state a specific part number, price, stock availability, warranty status, dealer,
+or claim outcome, and never claim to recognize an exact catalog SKU. If the photo is
+unclear, not an automotive/mechanical part, or you cannot tell, say so plainly.
+Answer in 2-4 concise sentences of plain text only, no markdown, no JSON, no chain-of-thought."""
+_ALLOWED_IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
+_MAX_IMAGE_BYTES = 5_000_000
 
 
 class LLMError(Exception):
@@ -273,6 +286,60 @@ class LLMClient:
             )
             return result
 
+    def describe_image(self, image_bytes, mime_type, prompt, *, max_tokens=200):
+        """One bounded vision call. Returns a free-text description only, never a parsed fact."""
+        try:
+            settings = (
+                self._settings if self._settings is not None else LLMSettings.from_environment()
+            )
+            settings.validate()
+        except (TypeError, ValueError):
+            raise LLMConfigurationError("LLM configuration is incomplete or invalid.") from None
+        if not settings.enabled:
+            raise LLMDisabledError("LLM adapter is disabled.")
+        if mime_type not in _ALLOWED_IMAGE_TYPES:
+            raise LLMConfigurationError("Unsupported image type.")
+        if not isinstance(image_bytes, (bytes, bytearray)) or not image_bytes:
+            raise LLMConfigurationError("Provide non-empty image bytes.")
+        if len(image_bytes) > _MAX_IMAGE_BYTES:
+            raise LLMConfigurationError("Image exceeds the adapter size limit.")
+        if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 2000:
+            raise LLMConfigurationError("Provide a short text prompt.")
+        if type(max_tokens) is not int or not 0 < max_tokens <= settings.max_output_tokens:
+            raise LLMConfigurationError("Requested output tokens exceed the configured limit.")
+        encoded = base64.b64encode(bytes(image_bytes)).decode("ascii")
+        data_url = f"data:{mime_type};base64,{encoded}"
+        payload = {
+            "model": settings.model,
+            "messages": [
+                {"role": "system", "content": DEALERBRAIN_SYSTEM_PROMPT + "\n" + _VISION_INSTRUCTION},
+                {"role": "user", "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                ]},
+            ],
+            "temperature": settings.temperature,
+            "max_tokens": max_tokens,
+        }
+        with self.usage.lock:
+            self.usage.check_budget(settings)
+            self.usage.request_count += 1
+            started = time.perf_counter()
+            try:
+                data, request_id = _post_json(settings, payload)
+                result = _parse_response(
+                    data, settings, (time.perf_counter() - started) * 1000, request_id
+                )
+            except LLMError:
+                self.usage.uncertain_attempts += 1
+                logger.warning("LLM vision request failed; provider details omitted.")
+                raise
+            self.usage.record(result)
+            logger.info(
+                "LLM vision request completed; usage_available=%s", result.total_tokens is not None
+            )
+            return result
+
 
 class FakeLLMClient:
     """Explicit deterministic local substitute, never an automatic production fallback."""
@@ -290,6 +357,12 @@ class FakeLLMClient:
         self.usage = UsageTracker()
 
     def chat(self, messages, *, temperature=None, max_tokens=None):
+        with self.usage.lock:
+            self.usage.request_count += 1
+            self.usage.record(self._response)
+        return self._response
+
+    def describe_image(self, image_bytes, mime_type, prompt, *, max_tokens=None):
         with self.usage.lock:
             self.usage.request_count += 1
             self.usage.record(self._response)

@@ -123,6 +123,19 @@ _OPERATIONS = MappingProxyType(
             reorder_point, bin_location, last_count_date
         """,
         ),
+        "list_parts": (
+            "parts",
+            Part,
+            ("part_no",),
+            True,
+            """
+        SELECT part_no, part_name, category, unit_price_eur, currency, warranty_months,
+            supplier_id, supplier_name, hazmat_flag, status, lead_time_days
+        FROM parts
+        ORDER BY part_no, part_name, category, unit_price_eur, currency, warranty_months,
+            supplier_id, supplier_name, hazmat_flag, status, lead_time_days
+        """,
+        ),
         "list_knowledge": (
             "knowledge", KnowledgeRecord, ("doc_id",), True,
             """SELECT doc_id, doc_type, title, module, error_code, summary, last_updated, owner_team
@@ -220,7 +233,9 @@ class Repository:
     def _lookup(self, operation: str, key: str | None = None):
         if operation not in _OPERATIONS:
             raise ValueError("Unsupported repository operation.")
-        listing = operation in {"list_inventory", "list_purchase_orders", "list_claims", "list_knowledge"}
+        listing = operation in {
+            "list_inventory", "list_purchase_orders", "list_claims", "list_knowledge", "list_parts",
+        }
         if not listing and not isinstance(key, str):
             raise TypeError("Lookup identifiers must be strings.")
         table, model, key_columns, many, sql = _OPERATIONS[operation]
@@ -321,3 +336,7 @@ class Repository:
     def list_knowledge(self) -> RepositoryResult[list[KnowledgeRecord]]:
         """List only operational Knowledge records with authoritative provenance."""
         return self._lookup("list_knowledge")
+
+    def list_parts(self) -> RepositoryResult[list[Part]]:
+        """Return operational rows in stable order for deterministic catalog matching."""
+        return self._lookup("list_parts")

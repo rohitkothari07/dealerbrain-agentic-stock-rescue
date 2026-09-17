@@ -2,9 +2,12 @@
 
 import pytest
 
-from models import EvidenceRef
+from models import EvidenceRef, InventoryRecord, Part, RepositoryResult
 from rules import BusinessIssue, DecisionResult, DecisionStatus
-from ui_models import dataset_view, format_evidence, format_facts, format_status, result_view
+from ui_models import (
+    dataset_view, format_evidence, format_facts, format_status, inventory_dashboard_view,
+    result_view,
+)
 
 
 def view(result):
@@ -135,6 +138,67 @@ def test_nested_po_view_and_child_trace():
     assert any(
         row["Outcome"] == "BLOCKED" and "dealer" in row["Check"] for row in rendered["checks"]
     )
+
+
+def inv(inventory_id, part_no, warehouse_loc, on_hand, reserved, available, reorder_point):
+    return InventoryRecord(
+        inventory_id, part_no, warehouse_loc, on_hand, reserved, available, reorder_point,
+        "Bin-1", "2026-01-01",
+    )
+
+
+def part(part_no, part_name, category):
+    return Part(part_no, part_name, category, 1.0, "EUR", 12, "S-1", "Supplier", "N", "Active", 5)
+
+
+def test_inventory_dashboard_joins_flags_and_aggregates():
+    records = [
+        inv("I-1", "P-1", "WH-A", 10, 2, 8, 5),
+        inv("I-2", "P-1", "WH-B", 0, 0, -1, 3),
+        inv("I-3", "P-2", "WH-A", 4, 1, 3, 5),
+    ]
+    inventory_result = RepositoryResult(
+        records, tuple(EvidenceRef("inventory", r.inventory_id) for r in records),
+    )
+    parts = [part("P-1", "Widget", "Body"), part("P-2", "Gizmo", "Brake")]
+    parts_result = RepositoryResult(parts, tuple(EvidenceRef("parts", p.part_no) for p in parts))
+    view = inventory_dashboard_view(inventory_result, parts_result)
+    assert view["summary"] == {
+        "distinct_parts": 2, "total_on_hand": 14, "total_available": 10, "warehouse_count": 2,
+        "below_reorder_count": 2, "negative_available_count": 1,
+    }
+    assert view["rows"][0]["Part Name"] == "Widget"
+    assert view["rows"][0]["Below Reorder Point"] is False
+    assert view["rows"][1]["Negative Available"] is True
+    assert view["rows"][1]["Below Reorder Point"] is True
+    assert view["rows"][2]["Below Reorder Point"] is True
+    warehouses = {w["Warehouse"]: w for w in view["warehouses"]}
+    assert warehouses["WH-A"] == {"Warehouse": "WH-A", "On Hand": 14, "Available": 11, "Distinct Parts": 2}
+    assert warehouses["WH-B"] == {"Warehouse": "WH-B", "On Hand": 0, "Available": -1, "Distinct Parts": 1}
+    categories = {c["Category"]: c for c in view["categories"]}
+    assert categories["Body"]["Distinct Parts"] == 1
+    assert categories["Brake"]["On Hand"] == 4
+
+
+def test_inventory_dashboard_missing_part_match_is_not_supplied():
+    records = [inv("I-1", "P-missing", "WH-A", 1, 0, 1, 0)]
+    inventory_result = RepositoryResult(records, (EvidenceRef("inventory", "I-1"),))
+    parts_result = RepositoryResult([], ())
+    view = inventory_dashboard_view(inventory_result, parts_result)
+    assert view["rows"][0]["Part Name"] == "Not supplied"
+    assert view["rows"][0]["Category"] == "Not supplied"
+
+
+@pytest.mark.parametrize("source", ["ANSWER_KEY", "README"])
+def test_inventory_dashboard_rejects_excluded_evidence(source):
+    inventory_result = RepositoryResult([], (EvidenceRef(source, "x"),))
+    parts_result = RepositoryResult([], ())
+    with pytest.raises(ValueError):
+        inventory_dashboard_view(inventory_result, parts_result)
+    inventory_result = RepositoryResult([], ())
+    parts_result = RepositoryResult([], (EvidenceRef(source, "x"),))
+    with pytest.raises(ValueError):
+        inventory_dashboard_view(inventory_result, parts_result)
 
 
 def test_scan_conversion():
